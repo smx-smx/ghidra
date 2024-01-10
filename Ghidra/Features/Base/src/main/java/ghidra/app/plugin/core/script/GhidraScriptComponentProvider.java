@@ -476,7 +476,6 @@ public class GhidraScriptComponentProvider extends ComponentProviderAdapter {
 	public List<ResourceFile> getScriptDirectories() {
 		return bundleHost.getGhidraBundles()
 			.stream()
-			.filter(GhidraSourceBundle.class::isInstance)
 			.filter(GhidraBundle::isEnabled)
 			.map(GhidraBundle::getFile)
 			.collect(Collectors.toList());
@@ -488,7 +487,6 @@ public class GhidraScriptComponentProvider extends ComponentProviderAdapter {
 	public List<ResourceFile> getWritableScriptDirectories() {
 		return bundleHost.getGhidraBundles()
 			.stream()
-			.filter(GhidraSourceBundle.class::isInstance)
 			.filter(Predicate.not(GhidraBundle::isSystemBundle))
 			.filter(GhidraBundle::isEnabled)
 			.map(GhidraBundle::getFile)
@@ -1202,9 +1200,7 @@ public class GhidraScriptComponentProvider extends ComponentProviderAdapter {
 
 		@Override
 		public void bundleEnablementChange(GhidraBundle bundle, boolean newEnablment) {
-			if (bundle instanceof GhidraSourceBundle) {
-				refresh();
-			}
+			refresh();
 		}
 
 		@Override

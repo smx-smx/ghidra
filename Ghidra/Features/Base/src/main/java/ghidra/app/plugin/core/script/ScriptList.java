@@ -90,7 +90,6 @@ public class ScriptList {
 	List<ResourceFile> getScriptDirectories() {
 		return bundleHost.getGhidraBundles()
 				.stream()
-				.filter(GhidraSourceBundle.class::isInstance)
 				.filter(GhidraBundle::isEnabled)
 				.map(GhidraBundle::getFile)
 				.collect(Collectors.toList());
@@ -98,7 +97,12 @@ public class ScriptList {
 
 	private void updateAvailableScriptFilesForDirectory(
 			List<ResourceFile> scriptAccumulator, ResourceFile directory) {
-		ResourceFile[] files = directory.listFiles();
+		ResourceFile[] files = null;
+		if(directory.isDirectory()){
+			files = directory.listFiles();
+		} else if(directory.getName().toLowerCase().endsWith(".jar")) { // jar bundle
+			files = new ResourceFile[]{ directory };
+		}
 		if (files == null) {
 			return;
 		}
