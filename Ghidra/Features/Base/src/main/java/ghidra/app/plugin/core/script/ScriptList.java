@@ -21,8 +21,10 @@ import java.util.stream.Collectors;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
 
+import generic.jar.Resource;
 import generic.jar.ResourceFile;
 import ghidra.app.plugin.core.osgi.*;
+import ghidra.app.script.GhidraScriptProvider;
 import ghidra.app.script.GhidraScriptUtil;
 import ghidra.util.Swing;
 import ghidra.util.datastruct.WeakDataStructureFactory;
@@ -95,20 +97,33 @@ public class ScriptList {
 				.collect(Collectors.toList());
 	}
 
+	private ResourceFile[] getNestedScripts(ResourceFile resource){
+		var provider = GhidraScriptUtil.getProvider(resource);
+		if(provider == null) return null;
+
+		var nested = provider.getNestedScripts(resource);
+		if(nested.isEmpty()) return null;
+
+		return nested.toArray(new ResourceFile[0]);
+	}
+
 	private void updateAvailableScriptFilesForDirectory(
 			List<ResourceFile> scriptAccumulator, ResourceFile directory) {
 		ResourceFile[] files = null;
+		ResourceFile[] nestedScripts = null;
+
 		if(directory.isDirectory()){
 			files = directory.listFiles();
-		} else if(directory.getName().toLowerCase().endsWith(".jar")) { // jar bundle
-			files = new ResourceFile[]{ directory };
+		} else if((nestedScripts = getNestedScripts(directory)) != null){
+			files = nestedScripts;
 		}
+
 		if (files == null) {
 			return;
 		}
 
 		for (ResourceFile scriptFile : files) {
-			if (scriptFile.isFile() && GhidraScriptUtil.hasScriptProvider(scriptFile)) {
+			if (scriptFile.isFile() && (nestedScripts != null || GhidraScriptUtil.hasScriptProvider(scriptFile))) {
 				scriptAccumulator.add(scriptFile);
 			}
 		}

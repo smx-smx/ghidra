@@ -17,6 +17,8 @@ package ghidra.app.script;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.regex.Pattern;
 
 import generic.jar.ResourceFile;
@@ -82,6 +84,14 @@ public abstract class GhidraScriptProvider
 	 * @return the file extension for this type of script
 	 */
 	public abstract String getExtension();
+
+	public boolean canLoadScript(ResourceFile scriptFile){
+		return scriptFile.getName().endsWith(getExtension().toLowerCase());
+	}
+
+	public Collection<ResourceFile> getNestedScripts(ResourceFile container){
+		return Collections.emptyList();
+	}
 
 	/**
 	 * Returns a GhidraScript instance for the specified source file.

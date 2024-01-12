@@ -15,12 +15,10 @@
  */
 package ghidra.app.script;
 
+import generic.jar.JarEntryFilter;
 import generic.jar.ResourceFile;
 import generic.stl.Pair;
-import ghidra.app.plugin.core.osgi.BundleHost;
-import ghidra.app.plugin.core.osgi.GhidraJarBundle;
-import ghidra.app.plugin.core.osgi.GhidraSourceBundle;
-import ghidra.app.plugin.core.osgi.OSGiParallelLock;
+import ghidra.app.plugin.core.osgi.*;
 import ghidra.util.task.TaskMonitor;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.wiring.BundleWiring;
@@ -28,11 +26,14 @@ import org.osgi.framework.wiring.BundleWiring;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
-import java.util.Objects;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class JavaBundleScriptProvider extends GhidraScriptProvider {
+
     private final BundleHost bundleHost;
 
     public JavaBundleScriptProvider(){
@@ -49,43 +50,102 @@ public class JavaBundleScriptProvider extends GhidraScriptProvider {
     }
 
     /**
-     * scans for Ghidra scripts in the default scripts package in the given bundle
-     * @param bundle    the bundle to search in
-     * @return          a collection of [Bundle, Class] pairs for each detected GhidraScript
+     * scans for Ghidra scripts in the given bundle
+     * @param osgiBundle    the bundle to search in
+     * @return          a collection of [path, class] pairs for each detected GhidraScript
      */
-    private Stream<? extends Pair<Bundle, Class<?>>> collectClasses(Bundle bundle){
-        var wiring = bundle.adapt(BundleWiring.class);
+    private static Stream<? extends Pair<String, Class<?>>> collectClasses(Bundle osgiBundle){
+        var wiring = osgiBundle.adapt(BundleWiring.class);
         return wiring.listResources("/", "*.class", BundleWiring.FINDENTRIES_RECURSE)
-                .stream().filter(path -> bundle.getEntry(path) != null)
+                .stream().filter(path -> osgiBundle.getEntry(path) != null)
                 .map(path -> {
                     // remove .class and convert to class name
-                    return path.replace('/', '.').substring(0, path.length() - 6);
-                })
-                .map(it -> {
+                    var className = path.replace('/', '.').substring(0, path.length() - 6);
                     try {
-                        return new Pair<Bundle, Class<?>>(bundle, bundle.loadClass(it));
+                        var clazz = osgiBundle.loadClass(className);
+                        return new Pair<String, Class<?>>(path, clazz);
                     } catch (ClassNotFoundException|NoClassDefFoundError e) {
-                        e.printStackTrace();
                         return null;
                     }
-                })
-                .filter(Objects::nonNull)
-                .filter(p -> {
-                    return GhidraScript.class.isAssignableFrom(p.second);
-                });
+                }).filter(it -> it != null && GhidraScript.class.isAssignableFrom(it.second));
     }
 
+    @Override
+    public boolean canLoadScript(ResourceFile scriptFile) {
+        var resourcePath = scriptFile.getAbsolutePath();
+        return resourcePath.endsWith(".jar") || resourcePath.startsWith(ResourceFile.JAR_FILE_PREFIX);
+    }
+
+    private void ensureBundleInstalled(GhidraJarBundle bundle) throws GhidraBundleException {
+        var osgiBundle = bundle.getOSGiBundle();
+        if(osgiBundle == null) {
+            bundleHost.install(bundle);
+        }
+        if(!bundle.isEnabled()){
+            bundleHost.enable(bundle);
+        }
+        bundleHost.activateAll(Collections.singleton(bundle), TaskMonitor.DUMMY, null);
+    }
+
+    private GhidraJarBundle getAndActivateJarBundle(ResourceFile container){
+        var bundle = bundleHost.getGhidraBundle(container);
+        if(bundle == null){
+            bundle = bundleHost.add(container, true, false);
+        }
+        if(bundle instanceof GhidraJarBundle){
+            try {
+                ensureBundleInstalled((GhidraJarBundle) bundle);
+            } catch (GhidraBundleException e) {
+                throw new RuntimeException(e);
+            }
+            return (GhidraJarBundle) bundle;
+        }
+        return null;
+    }
+
+    private static final JarEntryFilter JAR_ENTRY_FILTER = jarEntry -> !jarEntry.isDirectory() && jarEntry.getName().endsWith(".class");
+
+    @Override
+    public Collection<ResourceFile> getNestedScripts(ResourceFile container) {
+        var bundle = getAndActivateJarBundle(container);
+        var osgiBundle = bundle.getOSGiBundle();
+
+        var scriptClasses = collectClasses(osgiBundle)
+                .map(it -> it.first)
+                .collect(Collectors.toSet());
+
+        var containerPath = container.getAbsolutePath();
+        return scriptClasses.stream().map(it -> {
+            var uri = String.format("%s//%s!/%s", ResourceFile.JAR_FILE_PREFIX, containerPath, it);
+            return new ResourceFile(uri, JAR_ENTRY_FILTER);
+        }).toList();
+    }
+
+    private ResourceFile getJarFile(ResourceFile jarFile){
+        var absolutePath = jarFile.getAbsolutePath();
+        if (absolutePath.startsWith(ResourceFile.JAR_FILE_PREFIX)) {
+            int indexOf = absolutePath.indexOf("!/");
+            if (indexOf < 0) {
+                throw new IllegalArgumentException("Invalid jar specification: " + absolutePath);
+            }
+            String filePath = absolutePath.substring(ResourceFile.JAR_FILE_PREFIX.length(), indexOf);
+            return new ResourceFile(filePath);
+        }
+        return jarFile;
+    }
 
     /**
      * Activate and build the {@link GhidraSourceBundle} containing {@code jarFile} then load the
      * script's class from its class loader.
      *
-     * @param jarFile the source file
+     * @param resourceIdentifier the source file
      * @param writer the target for build messages
      * @return the loaded {@link Class} object
      * @throws Exception if build, activation, or class loading fail
      */
-    public Class<?> loadClass(ResourceFile jarFile, PrintWriter writer) throws Exception {
+    public Class<?> loadClass(ResourceFile resourceIdentifier, PrintWriter writer) throws Exception {
+        var className = getJarClassName(resourceIdentifier);
+        var jarFile = getJarFile(resourceIdentifier);
         GhidraJarBundle bundle = (GhidraJarBundle) bundleHost.getGhidraBundle(jarFile);
         if (bundle == null) {
             throw new ClassNotFoundException(
@@ -99,13 +159,22 @@ public class JavaBundleScriptProvider extends GhidraScriptProvider {
             throw new ClassNotFoundException(
                     "Failed to get OSGi bundle containing script: " + jarFile.toString());
         }
-        var scriptClasses = collectClasses(osgiBundle);
-        var scriptClass = scriptClasses.findFirst();
-        if(!scriptClass.isPresent()){
-            throw new RuntimeException("no script classes found in jar bundle");
+        return osgiBundle.loadClass(className);
+    }
+
+    private static String getJarClassName(ResourceFile resource) {
+        var absolutePath = resource.getAbsolutePath();
+        if(!absolutePath.startsWith(ResourceFile.JAR_FILE_PREFIX)
+        || !absolutePath.endsWith(".class")){
+            throw new IllegalArgumentException("Invalid jar specification: " + absolutePath);
         }
-        Class<?> clazz = scriptClass.get().second;
-        return clazz;
+
+        var indexOf = absolutePath.indexOf("!/");
+        if(indexOf < 0){
+            throw new IllegalArgumentException("Invalid jar specification: " + absolutePath);
+        }
+        var relaPath = absolutePath.substring(indexOf + 2, absolutePath.length() - 6);
+        return relaPath.replace('/', '.');
     }
 
     @Override

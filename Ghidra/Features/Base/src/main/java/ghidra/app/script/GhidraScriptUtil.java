@@ -298,7 +298,7 @@ public class GhidraScriptUtil {
 	 * @return the Ghidra script provider
 	 */
 	public static GhidraScriptProvider getProvider(ResourceFile scriptFile) {
-		return findProvider(scriptFile.getName());
+		return findProvider(scriptFile);
 	}
 
 	/**
@@ -323,6 +323,13 @@ public class GhidraScriptUtil {
 			if (fileName.endsWith(provider.getExtension().toLowerCase())) {
 				return provider;
 			}
+		}
+		return null;
+	}
+
+	private static GhidraScriptProvider findProvider(ResourceFile scriptFile){
+		for(GhidraScriptProvider provider : getProviders()){
+			if(provider.canLoadScript(scriptFile)) return provider;
 		}
 		return null;
 	}

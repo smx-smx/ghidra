@@ -30,7 +30,7 @@ import utilities.util.FileUtilities;
  */
 
 public class ResourceFile implements Comparable<ResourceFile> {
-	private static final String JAR_FILE_PREFIX = "jar:file:";
+	public static final String JAR_FILE_PREFIX = "jar:file:";
 	private Resource resource;
 	private static Map<String, JarResource> jarRootsMap = new HashMap<>();
 
